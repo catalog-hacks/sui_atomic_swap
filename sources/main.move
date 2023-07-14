@@ -15,6 +15,7 @@ module atomic_swapv1::AtomicSwap {
     const ESWAP_NOT_EXPIRED: u64 = 3;
     const ESECRET_MISMATCH: u64 = 4;
     const ECREATED_SWAP_NOT_OURS: u64 = 5;
+    const ESWAP_ALREADY_REDEEMED_OR_REFUNDED: u64 = 6;
 
     // The Swap struct
     struct Swap has key {
@@ -23,7 +24,7 @@ module atomic_swapv1::AtomicSwap {
         reciever: address,
         amount: u64,
         secret_hash: vector<u8>,
-        coins: coin::Coin<SUI>,
+        coins: Coin<SUI>,
         expiry: u64,
     }
 
@@ -83,35 +84,37 @@ module atomic_swapv1::AtomicSwap {
 
     // Refunds the coins and destroys Swap object
     public entry fun refund_Swap(
-        swap: Swap,
-        clock: &Clock
+        swap: &mut Swap, 
+        clock: &Clock,
+        ctx: &mut TxContext
     ){
         // Makes sure that swap has expired
         assert!(swap.expiry < clock::timestamp_ms(clock), ESWAP_NOT_EXPIRED);
 
         // Unpack the Swap object, only need sender, coins and id (it cant be dropped) so the rest are all _ 
-        let Swap{
-            id: id,
-            sender: sender,
-            reciever: _,
-            amount: _,
-            secret_hash: _,
-            coins: coins,
-            expiry: _,
-        } = swap;
+        let amount = swap.amount;
+        let sender = swap.sender;
 
-        // Delete the object using its id
-        object::delete(id);
+        // If coins are 0, then swap has been used
+        assert!(coin::value<SUI>(&swap.coins) > 0, ESWAP_ALREADY_REDEEMED_OR_REFUNDED);
 
         // Transfer the coins to the sender
-        sui::transfer(coins, sender);
+        sui::transfer(
+            coin::split(
+                &mut swap.coins,
+                amount,
+                ctx
+            ), 
+            sender
+        );
     }
 
     // Redeems the coins and destroys the Swap object
     public entry fun redeem_Swap(
-        swap: Swap,
+        swap: &mut Swap,
         secret: vector<u8>,
-        clock: &Clock
+        clock: &Clock,
+        ctx: &mut TxContext
     ){
         // Makes sure that swap has expired
         assert!(swap.expiry >= clock::timestamp_ms(clock), ESWAP_EXPIRED);
@@ -120,31 +123,29 @@ module atomic_swapv1::AtomicSwap {
         assert!(swap.secret_hash == hash::sha2_256(secret), ESECRET_MISMATCH);
 
         // Unpack the Swap object, only need sender, coins and id (it cant be dropped) so the rest are all _ 
-        let Swap{
-            id: id,
-            sender: _,
-            reciever: reciever,
-            amount: _,
-            secret_hash: _,
-            coins: coins,
-            expiry: _,
-        } = swap;
+        let amount = swap.amount;
+        let reciever = swap.reciever;
 
-        // Delete the object using its id
-        object::delete(id);
+        // If coins are 0, then swap has been used
+        assert!(coin::value<SUI>(&swap.coins) > 0, ESWAP_ALREADY_REDEEMED_OR_REFUNDED);
 
         // Transfer the coins to the sender
-        sui::transfer(coins, reciever);
+        sui::transfer(
+            coin::split(
+                &mut swap.coins,
+                amount,
+                ctx
+            ), 
+            reciever
+        );
     }
 
     // ================================================= Tests ================================================= 
 
     #[test_only]
     use sui::test_scenario;     // The test scenario
-    // #[test_only]
-    // use sui::test_utils;        // To print stuff
-    // #[test_only]
 
+    // Test just the initialization part of it
     #[test]
     public fun test_Initialization(){
         let sender_address: address = @0x0;     // Address of the sender    
@@ -169,7 +170,7 @@ module atomic_swapv1::AtomicSwap {
 
         test_scenario::next_tx(scenario, sender_address);
 
-        let sui_Balance = test_scenario::take_from_sender<coin::Coin<SUI>>(scenario);
+        let sui_Balance = test_scenario::take_from_sender<Coin<SUI>>(scenario);
 
         initialize_Swap(
             reciever_address,
@@ -205,6 +206,7 @@ module atomic_swapv1::AtomicSwap {
         test_scenario::end(scenario_val);
     }
 
+    // Test the refund flow
     #[test]
     public fun test_Refunding(){
         let sender_address: address = @0x0;     // Address of the sender    
@@ -224,12 +226,12 @@ module atomic_swapv1::AtomicSwap {
         let clock = clock::create_for_testing(test_scenario::ctx(scenario));
 
         let coins_for_test = coin::mint_for_testing<SUI>(amount + 50, test_scenario::ctx(scenario));   // The coins we are going to give
-
         sui::transfer(coins_for_test, tx_context::sender(test_scenario::ctx(scenario)));
+
 
         test_scenario::next_tx(scenario, sender_address);
 
-        let sui_Balance = test_scenario::take_from_sender<coin::Coin<SUI>>(scenario);
+        let sui_Balance = test_scenario::take_from_sender<Coin<SUI>>(scenario);
 
         initialize_Swap(
             reciever_address,
@@ -242,40 +244,269 @@ module atomic_swapv1::AtomicSwap {
         );
         
         test_scenario::next_tx(scenario, sender_address);
-        
-        // Send it back to sender
+
+        // Take the swap and increment clock (for refund)
         test_scenario::return_to_sender(scenario, sui_Balance);
-
         let shared_Swap = test_scenario::take_shared<Swap>(scenario);
-
         clock::increment_for_testing(&mut clock, 100);
-
         test_scenario::next_tx(scenario, sender_address);
 
-        // Makes sure that swap has expired
-        assert!(shared_Swap.expiry < clock::timestamp_ms(&clock), ESWAP_NOT_EXPIRED);
 
-        // Unpack the Swap object, only need sender, coins and id (it cant be dropped) so the rest are all _ 
-        let Swap{
-            id: id,
-            sender: sender,
-            reciever: _,
-            amount: _,
-            secret_hash: _,
-            coins: coins,
-            expiry: _,
-        } = shared_Swap;
+        refund_Swap(
+            &mut shared_Swap,
+            &clock,
+            test_scenario::ctx(scenario)
+        );
 
-        // Delete the object using its id
-        // object::delete(id);
-
-        // Transfer the coins to the sender
-        sui::transfer(coins, sender);
-
-        // test_scenario::return_shared(shared_Swap);
-
+        test_scenario::return_shared(shared_Swap);
         test_scenario::next_tx(scenario, sender_address);
  
+        // boilerplate to end the test
+        clock::destroy_for_testing(clock);
+        test_scenario::end(scenario_val);
+    }
+
+    // Test the redeem flow
+    #[test]
+    public fun test_Redeeming(){
+        let sender_address: address = @0x0;     // Address of the sender    
+        let reciever_address: address = @0x1;   // Address of the receiver
+
+        // The secrets
+        let secret = b"ABAB";
+        let secret_hash = hash::sha2_256(secret);
+
+        let expiry: u64 = 0;
+        let amount: u64 = 100;
+
+        // Initializing the scenarios
+        let scenario_val = test_scenario::begin(sender_address);
+        let scenario = &mut scenario_val;
+
+        let clock = clock::create_for_testing(test_scenario::ctx(scenario));
+
+        let coins_for_test = coin::mint_for_testing<SUI>(amount + 50, test_scenario::ctx(scenario));   // The coins we are going to give
+        sui::transfer(coins_for_test, tx_context::sender(test_scenario::ctx(scenario)));
+
+        test_scenario::next_tx(scenario, sender_address);
+
+        let sui_Balance = test_scenario::take_from_sender<Coin<SUI>>(scenario);
+
+        initialize_Swap(
+            reciever_address,
+            &mut sui_Balance,
+            secret_hash,
+            amount, 
+            expiry,
+            &clock,
+            test_scenario::ctx(scenario)
+        );
+        
+        test_scenario::next_tx(scenario, sender_address);
+
+        // Take the swap and increment clock (for refund)
+        test_scenario::return_to_sender(scenario, sui_Balance);
+        let shared_Swap = test_scenario::take_shared<Swap>(scenario);
+        test_scenario::next_tx(scenario, sender_address);
+
+
+        redeem_Swap(
+            &mut shared_Swap,
+            secret,
+            &clock,
+            test_scenario::ctx(scenario)
+        );
+
+        test_scenario::return_shared(shared_Swap);
+        test_scenario::next_tx(scenario, sender_address);
+ 
+        // boilerplate to end the test
+        clock::destroy_for_testing(clock);
+        test_scenario::end(scenario_val);
+    }
+
+    // Test redeeming after swap expires (it will abort)
+    #[test]
+    #[expected_failure(abort_code = ESWAP_EXPIRED)]
+    public fun test_Redeeming_after_expiry(){
+        let sender_address: address = @0x0;     // Address of the sender    
+        let reciever_address: address = @0x1;   // Address of the receiver
+
+        // The secrets
+        let secret = b"ABAB";
+        let secret_hash = hash::sha2_256(secret);
+
+        let expiry: u64 = 0;
+        let amount: u64 = 100;
+
+        // Initializing the scenarios
+        let scenario_val = test_scenario::begin(sender_address);
+        let scenario = &mut scenario_val;
+
+        let clock = clock::create_for_testing(test_scenario::ctx(scenario));
+
+        let coins_for_test = coin::mint_for_testing<SUI>(amount + 50, test_scenario::ctx(scenario));   // The coins we are going to give
+        sui::transfer(coins_for_test, tx_context::sender(test_scenario::ctx(scenario)));
+
+        test_scenario::next_tx(scenario, sender_address);
+
+        let sui_Balance = test_scenario::take_from_sender<Coin<SUI>>(scenario);
+
+        initialize_Swap(
+            reciever_address,
+            &mut sui_Balance,
+            secret_hash,
+            amount, 
+            expiry,
+            &clock,
+            test_scenario::ctx(scenario)
+        );
+        
+        test_scenario::next_tx(scenario, sender_address);
+
+        // Take the swap and increment clock (for refund)
+        test_scenario::return_to_sender(scenario, sui_Balance);
+        let shared_Swap = test_scenario::take_shared<Swap>(scenario);
+        clock::increment_for_testing(&mut clock, 100);
+        test_scenario::next_tx(scenario, sender_address);
+
+        redeem_Swap(
+            &mut shared_Swap,
+            secret,
+            &clock,
+            test_scenario::ctx(scenario)
+        );
+
+        test_scenario::return_shared(shared_Swap);
+        test_scenario::next_tx(scenario, sender_address);
+ 
+        // boilerplate to end the test
+        clock::destroy_for_testing(clock);
+        test_scenario::end(scenario_val);
+    }
+
+    // Test refunding before swap expires (it will abort)
+    #[test]
+    #[expected_failure(abort_code = ESWAP_NOT_EXPIRED)]
+    public fun test_Refunding_before_expiry(){
+        let sender_address: address = @0x0;     // Address of the sender    
+        let reciever_address: address = @0x1;   // Address of the receiver
+
+        // The secrets
+        let secret = b"ABAB";
+        let secret_hash = hash::sha2_256(secret);
+
+        let expiry: u64 = 0;
+        let amount: u64 = 100;
+
+        // Initializing the scenarios
+        let scenario_val = test_scenario::begin(sender_address);
+        let scenario = &mut scenario_val;
+
+        let clock = clock::create_for_testing(test_scenario::ctx(scenario));
+
+        let coins_for_test = coin::mint_for_testing<SUI>(amount + 50, test_scenario::ctx(scenario));   // The coins we are going to give
+        sui::transfer(coins_for_test, tx_context::sender(test_scenario::ctx(scenario)));
+
+        test_scenario::next_tx(scenario, sender_address);
+
+        let sui_Balance = test_scenario::take_from_sender<Coin<SUI>>(scenario);
+
+        initialize_Swap(
+            reciever_address,
+            &mut sui_Balance,
+            secret_hash,
+            amount, 
+            expiry,
+            &clock,
+            test_scenario::ctx(scenario)
+        );
+        
+        test_scenario::next_tx(scenario, sender_address);
+
+        // Take the swap and increment clock (for refund)
+        test_scenario::return_to_sender(scenario, sui_Balance);
+        let shared_Swap = test_scenario::take_shared<Swap>(scenario);
+        test_scenario::next_tx(scenario, sender_address);
+
+        refund_Swap(
+            &mut shared_Swap,
+            &clock,
+            test_scenario::ctx(scenario)
+        );
+
+        test_scenario::return_shared(shared_Swap);
+        test_scenario::next_tx(scenario, sender_address);
+ 
+        // boilerplate to end the test
+        clock::destroy_for_testing(clock);
+        test_scenario::end(scenario_val);
+    }
+
+    // Test refunding after swap has been redeemed (it will abort)
+    #[test]
+    #[expected_failure(abort_code = ESWAP_ALREADY_REDEEMED_OR_REFUNDED)]
+    public fun test_Refund_after_redeem(){
+        let sender_address: address = @0x0;     // Address of the sender    
+        let reciever_address: address = @0x1;   // Address of the receiver
+
+        // The secrets
+        let secret = b"ABAB";
+        let secret_hash = hash::sha2_256(secret);
+
+        let expiry: u64 = 0;
+        let amount: u64 = 100;
+
+        // Initializing the scenarios
+        let scenario_val = test_scenario::begin(sender_address);
+        let scenario = &mut scenario_val;
+
+        let clock = clock::create_for_testing(test_scenario::ctx(scenario));
+
+        let coins_for_test = coin::mint_for_testing<SUI>(amount + 50, test_scenario::ctx(scenario));   // The coins we are going to give
+        sui::transfer(coins_for_test, tx_context::sender(test_scenario::ctx(scenario)));
+
+
+        test_scenario::next_tx(scenario, sender_address);
+
+        let sui_Balance = test_scenario::take_from_sender<Coin<SUI>>(scenario);
+
+        initialize_Swap(
+            reciever_address,
+            &mut sui_Balance,
+            secret_hash,
+            amount, 
+            expiry,
+            &clock,
+            test_scenario::ctx(scenario)
+        );
+        
+        test_scenario::next_tx(scenario, sender_address);
+
+        // Take the swap and increment clock (for refund)
+        test_scenario::return_to_sender(scenario, sui_Balance);
+        let shared_Swap = test_scenario::take_shared<Swap>(scenario);
+        test_scenario::next_tx(scenario, sender_address);
+
+        redeem_Swap(
+            &mut shared_Swap,
+            secret,
+            &clock,
+            test_scenario::ctx(scenario)
+        );
+
+        clock::increment_for_testing(&mut clock, 100);
+        test_scenario::next_tx(scenario, sender_address);
+
+        refund_Swap(
+            &mut shared_Swap,
+            &clock,
+            test_scenario::ctx(scenario)
+        );
+
+        test_scenario::return_shared(shared_Swap);
+        test_scenario::next_tx(scenario, sender_address);
+
         // boilerplate to end the test
         clock::destroy_for_testing(clock);
         test_scenario::end(scenario_val);
