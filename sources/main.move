@@ -6,6 +6,7 @@ module atomic_swapv1::AtomicSwap {
     use sui::tx_context::{Self, TxContext};         // Transaction Context
     use sui::clock::{Self, Clock};                  // To access time
     use sui::transfer;                              // To make the object publicly accessible
+    use sui::event;                                 // To emit events
 
     use 0x1::hash;                                  // To hash the secret, for the case of redeeming
 
@@ -65,9 +66,18 @@ module atomic_swapv1::AtomicSwap {
         // Check that value of coins exceeds amount in swap
         assert!(coin::value<SUI>(coins) >= amount, ENOT_ENOUGH_BALANCE);
 
+        let id = object::new(ctx);
+
+        // Emit event
+        event::emit(InitializeEvent {
+            Swap_ID: object::uid_to_inner(&id),
+            sender: tx_context::sender(ctx),
+            reciever: reciever
+        });
+
         // get the required amount out of the users balance
         let swap = Swap {
-            id: object::new(ctx),                                               // Create a new ID for the object
+            id: id,                                               // Create a new ID for the object
             sender: tx_context::sender(ctx),                                    // The address of the sender 
             reciever: reciever,                                                 // The address of the reciever
             amount: amount,                                                     // The amount to be transferred
@@ -78,13 +88,11 @@ module atomic_swapv1::AtomicSwap {
 
         // Share the object so anyone can access nad mutate it
         transfer::share_object<Swap>(swap);
-
-        // To Do : Emit event
     }
 
     // Refunds the coins and destroys Swap object
     public entry fun refund_Swap(
-        swap: &mut Swap, 
+        swap: &mut Swap,
         clock: &Clock,
         ctx: &mut TxContext
     ){
@@ -107,6 +115,13 @@ module atomic_swapv1::AtomicSwap {
             ), 
             sender
         );
+
+        // Emit event
+        event::emit(RefundEvent {
+            Swap_ID: object::uid_to_inner(&swap.id),
+            sender: swap.sender,
+            reciever: swap.reciever
+        });
     }
 
     // Redeems the coins and destroys the Swap object
@@ -138,6 +153,14 @@ module atomic_swapv1::AtomicSwap {
             ), 
             reciever
         );
+
+        // Emit event
+        event::emit(RedeemEvent {
+            Swap_ID: object::uid_to_inner(&swap.id),
+            sender: swap.sender,
+            reciever: swap.reciever,
+            secret: secret
+        });
     }
 
     // ================================================= Tests ================================================= 
