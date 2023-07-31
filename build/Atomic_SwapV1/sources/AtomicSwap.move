@@ -47,16 +47,16 @@ module atomic_swapv1::AtomicSwap {
 
     // Struct for the redeem Event
     struct RedeemEvent has copy, drop {
-        Swap_ID: ID,
-        sender: address,
-        reciever: address,
-        secret: vector<u8>
+            Swap_ID: ID,
+            sender: address,
+            reciever: address,
+            secret: vector<u8>
     }
 
     // Creates a swap object and makes it a shared_object
     public entry fun initialize_Swap(
         reciever: address,
-        coins: &mut Coin<SUI>,
+        coins: Coin<SUI>,
         secret_hash: vector<u8>,
         amount: u64, 
         expiry_hours: u64,
@@ -64,7 +64,7 @@ module atomic_swapv1::AtomicSwap {
         ctx: &mut TxContext
     ) {
         // Check that value of coins exceeds amount in swap
-        assert!(coin::value<SUI>(coins) >= amount, ENOT_ENOUGH_BALANCE);
+        assert!(coin::value<SUI>(&coins) >= amount, ENOT_ENOUGH_BALANCE);
 
         let id = object::new(ctx);
 
@@ -82,8 +82,9 @@ module atomic_swapv1::AtomicSwap {
             reciever: reciever,                                                 // The address of the reciever
             amount: amount,                                                     // The amount to be transferred
             secret_hash: secret_hash,                                           // The hashed secret
-            coins: coin::split(coins, amount, ctx),                             // The coins where value(coins) == amount
-            expiry: clock::timestamp_ms(clock) + expiry_hours * 3600 * 1000     // THe expiry, being (expiry_hours) hours away from initialization time
+            coins,
+            // coins: coin::split(coins, amount, ctx),                             // The coins where value(coins) == amount
+            expiry: clock::timestamp_ms(clock) + expiry_hours * 60 * 1000     // THe expiry, being (expiry_hours) hours away from initialization time
         };
 
         // Share the object so anyone can access nad mutate it
@@ -187,7 +188,7 @@ module atomic_swapv1::AtomicSwap {
 
         let clock = clock::create_for_testing(test_scenario::ctx(scenario));
 
-        let coins_for_test = coin::mint_for_testing<SUI>(amount + 50, test_scenario::ctx(scenario));   // The coins we are going to give
+        let coins_for_test = coin::mint_for_testing<SUI>(amount, test_scenario::ctx(scenario));   // The coins we are going to give
 
         sui::transfer(coins_for_test, tx_context::sender(test_scenario::ctx(scenario)));
 
@@ -197,7 +198,7 @@ module atomic_swapv1::AtomicSwap {
 
         initialize_Swap(
             reciever_address,
-            &mut sui_Balance,
+            sui_Balance,
             secret_hash,
             amount, 
             expiry,
@@ -206,10 +207,10 @@ module atomic_swapv1::AtomicSwap {
         );
         
         // Check that the amount got deducted from the sender's balance!!!!!!!
-        assert!(coin::value<SUI>(&sui_Balance) == 50, 69);
+        // assert!(coin::value<SUI>(&sui_Balance) == 50, 69);
 
         // Send it back to sender
-        test_scenario::return_to_sender(scenario, sui_Balance);
+        // test_scenario::return_to_sender(scenario, sui_Balance);
 
         // Make sure that transaction is over
         test_scenario::next_tx(scenario, sender_address);
@@ -248,7 +249,7 @@ module atomic_swapv1::AtomicSwap {
 
         let clock = clock::create_for_testing(test_scenario::ctx(scenario));
 
-        let coins_for_test = coin::mint_for_testing<SUI>(amount + 50, test_scenario::ctx(scenario));   // The coins we are going to give
+        let coins_for_test = coin::mint_for_testing<SUI>(amount, test_scenario::ctx(scenario));   // The coins we are going to give
         sui::transfer(coins_for_test, tx_context::sender(test_scenario::ctx(scenario)));
 
 
@@ -258,7 +259,7 @@ module atomic_swapv1::AtomicSwap {
 
         initialize_Swap(
             reciever_address,
-            &mut sui_Balance,
+            sui_Balance,
             secret_hash,
             amount, 
             expiry,
@@ -269,7 +270,7 @@ module atomic_swapv1::AtomicSwap {
         test_scenario::next_tx(scenario, sender_address);
 
         // Take the swap and increment clock (for refund)
-        test_scenario::return_to_sender(scenario, sui_Balance);
+        // test_scenario::return_to_sender(scenario, sui_Balance);
         let shared_Swap = test_scenario::take_shared<Swap>(scenario);
         clock::increment_for_testing(&mut clock, 100);
         test_scenario::next_tx(scenario, sender_address);
@@ -308,7 +309,7 @@ module atomic_swapv1::AtomicSwap {
 
         let clock = clock::create_for_testing(test_scenario::ctx(scenario));
 
-        let coins_for_test = coin::mint_for_testing<SUI>(amount + 50, test_scenario::ctx(scenario));   // The coins we are going to give
+        let coins_for_test = coin::mint_for_testing<SUI>(amount, test_scenario::ctx(scenario));   // The coins we are going to give
         sui::transfer(coins_for_test, tx_context::sender(test_scenario::ctx(scenario)));
 
         test_scenario::next_tx(scenario, sender_address);
@@ -317,7 +318,7 @@ module atomic_swapv1::AtomicSwap {
 
         initialize_Swap(
             reciever_address,
-            &mut sui_Balance,
+            sui_Balance,
             secret_hash,
             amount, 
             expiry,
@@ -328,7 +329,7 @@ module atomic_swapv1::AtomicSwap {
         test_scenario::next_tx(scenario, sender_address);
 
         // Take the swap and increment clock (for refund)
-        test_scenario::return_to_sender(scenario, sui_Balance);
+        // test_scenario::return_to_sender(scenario, sui_Balance);
         let shared_Swap = test_scenario::take_shared<Swap>(scenario);
         test_scenario::next_tx(scenario, sender_address);
 
@@ -368,7 +369,7 @@ module atomic_swapv1::AtomicSwap {
 
         let clock = clock::create_for_testing(test_scenario::ctx(scenario));
 
-        let coins_for_test = coin::mint_for_testing<SUI>(amount + 50, test_scenario::ctx(scenario));   // The coins we are going to give
+        let coins_for_test = coin::mint_for_testing<SUI>(amount, test_scenario::ctx(scenario));   // The coins we are going to give
         sui::transfer(coins_for_test, tx_context::sender(test_scenario::ctx(scenario)));
 
         test_scenario::next_tx(scenario, sender_address);
@@ -377,7 +378,7 @@ module atomic_swapv1::AtomicSwap {
 
         initialize_Swap(
             reciever_address,
-            &mut sui_Balance,
+            sui_Balance,
             secret_hash,
             amount, 
             expiry,
@@ -388,7 +389,7 @@ module atomic_swapv1::AtomicSwap {
         test_scenario::next_tx(scenario, sender_address);
 
         // Take the swap and increment clock (for refund)
-        test_scenario::return_to_sender(scenario, sui_Balance);
+        // test_scenario::return_to_sender(scenario, sui_Balance);
         let shared_Swap = test_scenario::take_shared<Swap>(scenario);
         clock::increment_for_testing(&mut clock, 100);
         test_scenario::next_tx(scenario, sender_address);
@@ -428,7 +429,7 @@ module atomic_swapv1::AtomicSwap {
 
         let clock = clock::create_for_testing(test_scenario::ctx(scenario));
 
-        let coins_for_test = coin::mint_for_testing<SUI>(amount + 50, test_scenario::ctx(scenario));   // The coins we are going to give
+        let coins_for_test = coin::mint_for_testing<SUI>(amount, test_scenario::ctx(scenario));   // The coins we are going to give
         sui::transfer(coins_for_test, tx_context::sender(test_scenario::ctx(scenario)));
 
         test_scenario::next_tx(scenario, sender_address);
@@ -437,7 +438,7 @@ module atomic_swapv1::AtomicSwap {
 
         initialize_Swap(
             reciever_address,
-            &mut sui_Balance,
+            sui_Balance,
             secret_hash,
             amount, 
             expiry,
@@ -448,7 +449,7 @@ module atomic_swapv1::AtomicSwap {
         test_scenario::next_tx(scenario, sender_address);
 
         // Take the swap and increment clock (for refund)
-        test_scenario::return_to_sender(scenario, sui_Balance);
+        // test_scenario::return_to_sender(scenario, sui_Balance);
         let shared_Swap = test_scenario::take_shared<Swap>(scenario);
         test_scenario::next_tx(scenario, sender_address);
 
@@ -486,7 +487,7 @@ module atomic_swapv1::AtomicSwap {
 
         let clock = clock::create_for_testing(test_scenario::ctx(scenario));
 
-        let coins_for_test = coin::mint_for_testing<SUI>(amount + 50, test_scenario::ctx(scenario));   // The coins we are going to give
+        let coins_for_test = coin::mint_for_testing<SUI>(amount, test_scenario::ctx(scenario));   // The coins we are going to give
         sui::transfer(coins_for_test, tx_context::sender(test_scenario::ctx(scenario)));
 
 
@@ -496,7 +497,7 @@ module atomic_swapv1::AtomicSwap {
 
         initialize_Swap(
             reciever_address,
-            &mut sui_Balance,
+            sui_Balance,
             secret_hash,
             amount, 
             expiry,
@@ -507,7 +508,7 @@ module atomic_swapv1::AtomicSwap {
         test_scenario::next_tx(scenario, sender_address);
 
         // Take the swap and increment clock (for refund)
-        test_scenario::return_to_sender(scenario, sui_Balance);
+        // test_scenario::return_to_sender(scenario, sui_Balance);
         let shared_Swap = test_scenario::take_shared<Swap>(scenario);
         test_scenario::next_tx(scenario, sender_address);
 
